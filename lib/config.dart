@@ -25,6 +25,13 @@ class AppConfig {
   // Arduino serial
   static const int arduinoBaudRate = 9600;
 
+  // Scene description trigger thresholds
+  static const double sceneDescProximityThreshold = 120.0; // cm
+  static const double sceneDescAmbiguousLow       = 0.35;  // gate confidence
+  static const double sceneDescAmbiguousHigh      = 0.65;  // gate confidence
+  static const int sceneDescStationarySeconds     = 4;     // seconds to detect stationary
+  static const int sceneDescPeriodicSeconds       = 20;    // seconds between ambient calls
+
   // Whether API key has been configured
   static bool get isApiKeySet =>
       geminiApiKey.isNotEmpty && geminiApiKey != 'YOUR_GEMINI_API_KEY_HERE';

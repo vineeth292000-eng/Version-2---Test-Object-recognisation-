@@ -207,6 +207,41 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ),
 
+            // Scene Description Card
+            if (_cascade.lastSceneDescription.isNotEmpty)
+              Card(
+                color: Colors.blueGrey[800],
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.visibility, color: Colors.lightBlueAccent, size: 16),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'SCENE DESCRIPTION',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.lightBlueAccent,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _cascade.lastSceneDescription,
+                        style: const TextStyle(fontSize: 15, height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
             // Session stats row
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

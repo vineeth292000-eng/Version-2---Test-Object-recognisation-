@@ -14,6 +14,7 @@ class DataLogger {
     'gate_latency_ms', 'classify_called', 'gemini_label', 'gemini_position',
     'gemini_confidence', 'gemini_latency_ms', 'cue_text', 'cue_source',
     'direction', 'total_latency_ms',
+    'scene_desc_triggered', 'scene_desc_trigger_reason', 'scene_description',
   ];
 
   Future<void> init() async {
@@ -62,6 +63,9 @@ class DataLogger {
         cue.source.name,
         cue.direction,
         cue.totalLatencyMs.toString(),
+        cue.sceneDescTrigger != null ? '1' : '0',
+        cue.sceneDescTrigger ?? '',
+        '"${(cue.sceneDescription ?? '').replaceAll('"', "'")}"',
       ];
       _sink!.writeln(row.join(','));
       _rows++;

@@ -170,6 +170,48 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
           const SizedBox(height: 16),
 
+          // Scene Description Stats Card
+          Card(
+            margin: const EdgeInsets.all(12),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Scene Description Calls',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Gemini was called for a full scene description when:',
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  _statRow('Proximity (<120cm)', cascade.sceneDescService.toStats()['proximity_triggers']),
+                  _statRow('Ambiguous gate (0.35-0.65)', cascade.sceneDescService.toStats()['ambiguous_triggers']),
+                  _statRow('Inconsistent detections', cascade.sceneDescService.toStats()['inconsistency_triggers']),
+                  _statRow('User stationary', cascade.sceneDescService.toStats()['stationary_triggers']),
+                  _statRow('Periodic ambient', cascade.sceneDescService.toStats()['periodic_triggers']),
+                  const Divider(),
+                  _statRow('Total scene calls', cascade.sceneDescService.toStats()['total_scene_calls']),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Last description:',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    cascade.lastSceneDescription.isEmpty
+                        ? 'No scene description yet'
+                        : cascade.lastSceneDescription,
+                    style: const TextStyle(fontSize: 14, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
           // Research interpretation
           Card(
             child: Padding(
@@ -288,6 +330,19 @@ class _ResultsScreenState extends State<ResultsScreen> {
             style: const TextStyle(fontSize: 12),
             textAlign: TextAlign.center,
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statRow(String label, dynamic value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 14)),
+          Text('${value ?? 0}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
         ],
       ),
     );

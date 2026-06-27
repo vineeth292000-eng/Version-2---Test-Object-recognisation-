@@ -5,10 +5,12 @@ import '../models/detection_result.dart';
 import '../config.dart';
 import 'gemini_service.dart';
 import 'tts_service.dart';
+import 'scene_description_service.dart';
 
 class CascadeEngine {
   final GeminiService _gemini = GeminiService();
   final TtsService    _tts;
+  final SceneDescriptionService _sceneDesc = SceneDescriptionService();
 
   // ── Research counters (shown on Results screen) ───────────────────────
   int totalFrames     = 0;
@@ -98,6 +100,28 @@ class CascadeEngine {
     final cue = _buildRichCue(detection, sensors, sw.elapsedMilliseconds);
     lastCue = cue;
     await _tts.speak(cue.text);
+
+    // ── SCENE DESCRIPTION CHECK ───────────────────────────────────────────
+    // Check if any of the 5 trigger parameters are met
+    final triggerReason = _sceneDesc.checkTriggers(
+      sensors:           sensors,
+      lastGate:          lastGate,
+      lastGateConfidence: lastGate?.confidence ?? 0.0,
+    );
+
+    if (triggerReason != null && frameBytes != null) {
+      // Call scene description asynchronously — don't block navigation cue
+      // Fire and forget: description will be spoken when it returns
+      _sceneDesc.describe(frameBytes, triggerReason).then((description) {
+        if (description != null && description.isNotEmpty) {
+          // Small delay so description doesn't overlap navigation cue
+          Future.delayed(const Duration(milliseconds: 800), () {
+            _tts.speak(description);
+          });
+        }
+      });
+    }
+
     return cue;
   }
 
@@ -183,6 +207,9 @@ class CascadeEngine {
   /// Gate trigger rate
   double get gateTriggerPercent =>
       totalFrames > 0 ? gateYesCount / totalFrames * 100.0 : 0.0;
+
+  SceneDescriptionService get sceneDescService => _sceneDesc;
+  String get lastSceneDescription => _sceneDesc.lastDescription;
 
   Map<String, dynamic> toStats() => {
     'total_frames':        totalFrames,

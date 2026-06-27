@@ -79,6 +79,8 @@ class NavCue {
   final String obstacleLabel;
   final DateTime timestamp;
   final int totalLatencyMs;
+  final String? sceneDescription;      // ADD THIS
+  final String? sceneDescTrigger;      // ADD THIS — which parameter triggered it
 
   const NavCue({
     required this.text,
@@ -87,5 +89,7 @@ class NavCue {
     required this.obstacleLabel,
     required this.timestamp,
     required this.totalLatencyMs,
+    this.sceneDescription,             // ADD THIS
+    this.sceneDescTrigger,             // ADD THIS
   });
 }
