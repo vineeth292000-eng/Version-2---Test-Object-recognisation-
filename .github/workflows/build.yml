@@ -45,6 +45,7 @@ jobs:
 
       - name: Copy source code
         run: |
+          rm -rf /tmp/fresh_project/lib/
           cp -r lib/ /tmp/fresh_project/lib/
           cp pubspec.yaml /tmp/fresh_project/pubspec.yaml
           if [ -d "assets" ]; then
