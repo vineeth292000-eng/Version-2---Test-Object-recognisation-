@@ -21,33 +21,31 @@ class SceneDescriptionService {
   final List<double> _leftHistory     = [];
   final List<double> _rightHistory    = [];
   final List<String> _crowdingHistory = [];
-  final List<String> _labelHistory    = [];  // last detected labels
+  final List<String> _labelHistory    = [];
 
   String          _lastDescription = '';
   String          _lastTrigger     = '';
   SceneComplexity _lastComplexity  = SceneComplexity.simple;
   bool            _isLoading       = false;
 
-  // Stats
-  int totalCalls           = 0;
-  int simpleCalls          = 0;
-  int detailedCalls        = 0;
-  int complexCalls         = 0;
-  int proximityCount       = 0;
-  int ambiguousCount       = 0;
-  int inconsistencyCount   = 0;
-  int stationaryCount      = 0;
-  int periodicCount        = 0;
-  int crowdedCount         = 0;
-  int movingObjectCount    = 0;
-  int complexSceneCount    = 0;
+  int totalCalls         = 0;
+  int simpleCalls        = 0;
+  int detailedCalls      = 0;
+  int complexCalls       = 0;
+  int proximityCount     = 0;
+  int ambiguousCount     = 0;
+  int inconsistencyCount = 0;
+  int stationaryCount    = 0;
+  int periodicCount      = 0;
+  int crowdedCount       = 0;
+  int movingObjectCount  = 0;
+  int complexSceneCount  = 0;
 
   String get lastDescription => _lastDescription;
   String get lastTrigger     => _lastTrigger;
   bool   get isLoading       => _isLoading;
   SceneComplexity get lastComplexity => _lastComplexity;
 
-  // ── SIMPLE prompt — quick ambient update ──────────────────────────────
   static const String _simplePrompt = '''
 You are describing an environment to a blind person navigating on foot.
 Respond in exactly 2 natural spoken sentences.
@@ -56,7 +54,6 @@ Describe: the type of space, how busy it is, and any key navigation features.
 Write for text-to-speech — natural spoken English only.
 ''';
 
-  // ── DETAILED prompt — richer spatial awareness ────────────────────────
   static const String _detailedPrompt = '''
 You are a navigation assistant for a blind person with a chest-mounted camera.
 Describe the scene in 3 sentences for text-to-speech.
@@ -74,7 +71,6 @@ Rules:
 - Do not start with "I can see" or "The image shows"
 ''';
 
-  // ── COMPLEX prompt — full situational awareness ───────────────────────
   static const String _complexPrompt = '''
 You are providing full situational awareness to a blind person navigating
 in a complex indoor environment. This is called when the scene is
@@ -95,23 +91,10 @@ Be specific:
 - If multiple hazards exist, prioritise the most dangerous one first
 
 Do NOT:
-- Start with "I can see" or "The image shows"  
+- Start with "I can see" or "The image shows"
 - Say "obstacle" — always name the actual object
-- Mention colours unless critical (e.g. a red wet floor sign)
+- Mention colours unless critical
 - List things — write flowing natural sentences
-
-Examples of good complex descriptions:
-"You are in a busy office corridor with people moving in both directions.
- A person is walking directly toward you about two metres ahead — stop and
- move slightly to your right to let them pass. Beyond them the corridor
- widens and appears clear for several metres, with a set of stairs visible
- at the far end on the left."
-
-"You appear to be entering a crowded cafeteria or dining area. Several
- people are seated at tables on both sides and two people are walking
- across your path about one metre ahead from right to left — pause and
- let them cross. The serving counter is visible ahead about four metres,
- and there is a clear path through the centre once the crossing people pass."
 ''';
 
   String? checkTriggers({
@@ -122,24 +105,23 @@ Examples of good complex descriptions:
   }) {
     _updateState(sensors, lastGate, lastDetection);
     final now = DateTime.now();
+    final secsSinceLast = now.difference(_lastAnyDescription).inSeconds;
 
-    if (now.difference(_lastAnyDescription).inSeconds 
-        AppConfig.sceneDescMinGapSeconds) return null;
+    if (secsSinceLast < AppConfig.sceneDescMinGapSeconds) return null;
 
-    // TRIGGER 1: PROXIMITY — something close, describe scene for context
+    // TRIGGER 1: PROXIMITY
     if (sensors.center < AppConfig.sceneDescProximityThreshold &&
         now.difference(_lastProximityTrigger).inSeconds >= 10) {
       return 'proximity';
     }
 
-    // TRIGGER 2: MOVING OBJECT APPROACHING — urgent scene context
-    if (velocity.isApproaching &&
-        now.difference(_lastAnyDescription).inSeconds >= 8) {
+    // TRIGGER 2: MOVING OBJECT APPROACHING
+    if (velocity.isApproaching && secsSinceLast >= 8) {
       movingObjectCount++;
       return 'moving_object';
     }
 
-    // TRIGGER 3: AMBIGUOUS GATE — AI not sure, describe scene to help
+    // TRIGGER 3: AMBIGUOUS GATE
     final gateConf = lastGate?.confidence ?? 1.0;
     if (gateConf >= AppConfig.sceneDescAmbiguousLow &&
         gateConf <= AppConfig.sceneDescAmbiguousHigh &&
@@ -147,7 +129,7 @@ Examples of good complex descriptions:
       return 'ambiguous';
     }
 
-    // TRIGGER 4: DETECTION INCONSISTENCY — flip-flopping results
+    // TRIGGER 4: DETECTION INCONSISTENCY
     if (_gateHistory.length >= 4 &&
         now.difference(_lastInconsistency).inSeconds >= 12) {
       int switches = 0;
@@ -157,7 +139,7 @@ Examples of good complex descriptions:
       if (switches >= 3) return 'inconsistency';
     }
 
-    // TRIGGER 5: STATIONARY — user stopped, give full awareness
+    // TRIGGER 5: STATIONARY
     if (_centerHistory.length >= 4 &&
         now.difference(_lastStationary).inSeconds >= 15) {
       final cVar = _variance(_centerHistory);
@@ -168,17 +150,16 @@ Examples of good complex descriptions:
       }
     }
 
-    // TRIGGER 6: CROWDED — multiple people detected recently
+    // TRIGGER 6: CROWDED
     if (_crowdingHistory.length >= 3 &&
-        now.difference(_lastAnyDescription).inSeconds >=
-            AppConfig.sceneDescCrowdedMinGap) {
+        secsSinceLast >= AppConfig.sceneDescCrowdedMinGap) {
       final recentCrowded = _crowdingHistory
           .where((c) => c == 'crowded' || c == 'moderate')
           .length;
       if (recentCrowded >= 2) return 'crowded';
     }
 
-    // TRIGGER 7: COMPLEX SCENE — multiple different obstacle types
+    // TRIGGER 7: COMPLEX SCENE
     if (_labelHistory.length >= 3 &&
         now.difference(_lastComplexTrigger).inSeconds >=
             AppConfig.sceneDescComplexMinGap) {
@@ -189,32 +170,30 @@ Examples of good complex descriptions:
       }
     }
 
-    // TRIGGER 8: NARROW PASSAGE detected
+    // TRIGGER 8: NARROW PASSAGE
     if (lastDetection?.environment.narrowPassage == true &&
-        now.difference(_lastAnyDescription).inSeconds >= 10) {
+        secsSinceLast >= 10) {
       return 'narrow_passage';
     }
 
-    // TRIGGER 9: FLOOR HAZARD detected
+    // TRIGGER 9: FLOOR HAZARD
     if (lastDetection?.environment.floorHazards == true &&
-        now.difference(_lastAnyDescription).inSeconds >= 8) {
+        secsSinceLast >= 8) {
       return 'floor_hazard';
     }
 
-    // TRIGGER 10: PERIODIC AMBIENT — regular update when path clear
+    // TRIGGER 10: PERIODIC
     final allClear = sensors.center > 150 &&
                      sensors.left   > 120 &&
                      sensors.right  > 120;
     if (allClear &&
-        now.difference(_lastAnyDescription).inSeconds >=
-            AppConfig.sceneDescPeriodicSeconds) {
+        secsSinceLast >= AppConfig.sceneDescPeriodicSeconds) {
       return 'periodic';
     }
 
     return null;
   }
 
-  /// Choose which prompt complexity to use based on trigger reason.
   SceneComplexity _complexityForTrigger(String reason) {
     switch (reason) {
       case 'complex_scene':
@@ -257,7 +236,6 @@ Examples of good complex descriptions:
     final complexity = _complexityForTrigger(triggerReason);
     _lastComplexity  = complexity;
 
-    // Update complexity counters
     switch (complexity) {
       case SceneComplexity.simple:   simpleCalls++;   break;
       case SceneComplexity.detailed: detailedCalls++; break;
@@ -283,10 +261,10 @@ Examples of good complex descriptions:
             ]
           }],
           'generationConfig': {
-            'temperature':     complexity == SceneComplexity.complex
-                                   ? 0.4 : 0.2,
+            'temperature':
+                complexity == SceneComplexity.complex ? 0.4 : 0.2,
             'maxOutputTokens': _maxTokensForComplexity(complexity),
-            'topP':            0.9,
+            'topP': 0.9,
           },
         }),
       ).timeout(Duration(seconds: AppConfig.geminiTimeoutSecs));
@@ -336,7 +314,6 @@ Examples of good complex descriptions:
     if (d != null && d.success) {
       _crowdingHistory.add(d.environment.crowding);
       if (_crowdingHistory.length > 3) _crowdingHistory.removeAt(0);
-
       _labelHistory.add(d.label.name);
       if (_labelHistory.length > 5) _labelHistory.removeAt(0);
     }
@@ -370,8 +347,6 @@ Examples of good complex descriptions:
       case 'complex_scene':
         _lastComplexTrigger = now;
         break;
-      case 'moving_object':
-        break;
     }
   }
 
@@ -399,21 +374,20 @@ Examples of good complex descriptions:
   }
 
   Map<String, dynamic> toStats() => {
-    'total_scene_calls':     totalCalls,
-    'simple_calls':          simpleCalls,
-    'detailed_calls':        detailedCalls,
-    'complex_calls':         complexCalls,
-    'proximity_triggers':    proximityCount,
+    'total_scene_calls':      totalCalls,
+    'simple_calls':           simpleCalls,
+    'detailed_calls':         detailedCalls,
+    'complex_calls':          complexCalls,
+    'proximity_triggers':     proximityCount,
     'moving_object_triggers': movingObjectCount,
-    'ambiguous_triggers':    ambiguousCount,
+    'ambiguous_triggers':     ambiguousCount,
     'inconsistency_triggers': inconsistencyCount,
-    'stationary_triggers':   stationaryCount,
-    'crowded_triggers':      crowdedCount,
+    'stationary_triggers':    stationaryCount,
+    'crowded_triggers':       crowdedCount,
     'complex_scene_triggers': complexSceneCount,
-    'periodic_triggers':     periodicCount,
-    'last_trigger':          _lastTrigger,
-    'last_complexity':       _lastComplexity.name,
+    'periodic_triggers':      periodicCount,
+    'last_trigger':           _lastTrigger,
+    'last_complexity':        _lastComplexity.name,
   };
 }
-
 
