@@ -104,7 +104,7 @@ Do NOT:
     required VelocityTracker  velocity,
   }) {
     _updateState(sensors, lastGate, lastDetection);
-    final now = DateTime.now();
+    final now           = DateTime.now();
     final secsSinceLast = now.difference(_lastAnyDescription).inSeconds;
 
     if (secsSinceLast < AppConfig.sceneDescMinGapSeconds) return null;
@@ -390,4 +390,3 @@ Do NOT:
     'last_complexity':        _lastComplexity.name,
   };
 }
-
