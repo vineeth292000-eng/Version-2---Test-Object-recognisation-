@@ -4,22 +4,22 @@ import '../config.dart';
 enum TtsPriority { critical, high, medium, low }
 
 class _TtsQueueItem {
-  final String text;
+  final String      text;
   final TtsPriority priority;
-  final int delayMs;
-  final String cueKey;
+  final int         delayMs;
+  final String      cueKey;
   _TtsQueueItem(this.text, this.priority, this.delayMs, this.cueKey);
 }
 
 class TtsService {
   final FlutterTts _tts = FlutterTts();
 
-  bool _ready = false;
-  bool _speaking = false;
-  TtsPriority? _currentPriority;
-  String? _lastCueKey;
-  DateTime _lastSpokeForKey = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime _lastSpokeAny    = DateTime.fromMillisecondsSinceEpoch(0);
+  bool          _ready           = false;
+  bool          _speaking        = false;
+  TtsPriority?  _currentPriority;
+  String?       _lastCueKey;
+  DateTime      _lastSpokeForKey = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime      _lastSpokeAny    = DateTime.fromMillisecondsSinceEpoch(0);
 
   int totalSpoken       = 0;
   int duplicatesSkipped = 0;
@@ -29,7 +29,7 @@ class TtsService {
 
   final List<_TtsQueueItem> _queue = [];
 
-  bool get isSpeaking => _speaking;
+  bool         get isSpeaking      => _speaking;
   TtsPriority? get currentPriority => _currentPriority;
 
   Future<void> init() async {
@@ -40,7 +40,7 @@ class TtsService {
     await _tts.awaitSpeakCompletion(false);
 
     _tts.setCompletionHandler(() {
-      _speaking = false;
+      _speaking        = false;
       _currentPriority = null;
       _processQueue();
     });
@@ -48,27 +48,21 @@ class TtsService {
     _ready = true;
   }
 
-  /// Speak [text]. [cueKey] identifies the *meaning* of the cue
-  /// (e.g. "sensor_center_b1", "gemini_chair_center_b0") so that small
-  /// changes in the spoken sentence — like a fluctuating cm reading —
-  /// don't bypass dedup/cooldown. Defaults to [text] if omitted.
   Future<void> speak(
     String text, {
     TtsPriority priority = TtsPriority.medium,
-    String? cueKey,
+    String?     cueKey,
   }) async {
     if (!_ready) await init();
     final key = cueKey ?? text;
     final now = DateTime.now();
 
-    // Minimum gap between ANY two cues, scaled by priority.
     final minGapMs = _minGapForPriority(priority);
     if (now.difference(_lastSpokeAny).inMilliseconds < minGapMs) {
       cooldownSkipped++;
       return;
     }
 
-    // Same meaning spoken too recently — skip.
     if (key == _lastCueKey &&
         now.difference(_lastSpokeForKey).inMilliseconds 
             AppConfig.ttsSameCueCooldownMs) {
@@ -120,12 +114,12 @@ class TtsService {
   void _processQueue() async {
     if (_queue.isEmpty || _speaking) return;
 
-    final item = _queue.removeAt(0);
-    _speaking         = true;
-    _currentPriority  = item.priority;
-    _lastCueKey       = item.cueKey;
-    _lastSpokeForKey  = DateTime.now();
-    _lastSpokeAny     = DateTime.now();
+    final item       = _queue.removeAt(0);
+    _speaking        = true;
+    _currentPriority = item.priority;
+    _lastCueKey      = item.cueKey;
+    _lastSpokeForKey = DateTime.now();
+    _lastSpokeAny    = DateTime.now();
     totalSpoken++;
 
     if (item.delayMs > 0) {
@@ -135,9 +129,6 @@ class TtsService {
     await _tts.speak(item.text);
   }
 
-  /// Speak immediately for safety-critical "stop" events.
-  /// Will NOT restart itself if a critical message is already
-  /// mid-utterance — lets it finish instead of looping forever.
   Future<void> speakUrgent(
     String text, {
     String cueKey = 'critical_stop',
@@ -145,7 +136,6 @@ class TtsService {
     if (!_ready) await init();
 
     if (_speaking && _currentPriority == TtsPriority.critical) {
-      // Already mid-"stop" — don't cut it off and restart.
       return;
     }
 
@@ -163,7 +153,7 @@ class TtsService {
 
   Future<void> stop() async {
     _queue.clear();
-    _speaking = false;
+    _speaking        = false;
     _currentPriority = null;
     await _tts.stop();
   }
