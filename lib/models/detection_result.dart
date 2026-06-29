@@ -76,17 +76,20 @@ class GateResult {
   final bool   obstacleDetected;
   final double confidence;
   final int    latencyMs;
+  final bool   success;
 
   const GateResult({
     required this.obstacleDetected,
     required this.confidence,
     required this.latencyMs,
+    this.success = true,
   });
 
   factory GateResult.error() => const GateResult(
     obstacleDetected: true,   // Assume obstacle on error (safe default)
     confidence:       0.0,
     latencyMs:        0,
+    success:          false,
   );
 }
 
