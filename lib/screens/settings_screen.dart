@@ -1,7 +1,5 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:image/image.dart' as img;
 import '../config.dart';
 import '../services/gemini_service.dart';
 import '../services/tts_service.dart';
@@ -71,47 +69,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    try {
-      // FIXED: do NOT save or restore AppConfig.geminiApiKey here.
-      // Use a temporary GeminiService with the key set only for this call,
-      // then immediately unset it. The actual save happens in _saveSettings().
-      final originalKey = AppConfig.geminiApiKey;
+    // Validate against a lightweight endpoint that needs no image and runs
+    // no generation, so a valid key can never be reported as invalid for
+    // content/safety reasons. Returns null when the key is valid.
+    final error = await GeminiService().validateApiKey(testKey);
+    if (!mounted) return;
+
+    if (error == null) {
+      // Key is good — make it live immediately so navigation works even
+      // before the user taps Save. The persistent save still happens there.
       AppConfig.geminiApiKey = testKey;
-
-      final image = img.Image(width: 8, height: 8);
-      img.fill(image, color: img.ColorRgb8(128, 128, 128));
-      final bytes = Uint8List.fromList(img.encodeJpg(image));
-
-      final gemini = GeminiService();
-      final result = await gemini.runGate(bytes);
-
-      // Restore — but only to the key we had before the test.
-      // If originalKey was the placeholder, keep testKey live in AppConfig
-      // so navigation benefits immediately even before Save is pressed.
-      if (originalKey == AppConfig.placeholderKey) {
-        // Leave the real key in place — user will save it
-        AppConfig.geminiApiKey = testKey;
-      } else {
-        AppConfig.geminiApiKey = originalKey;
-      }
-
-      // GateResult has no `success` field — runGate() catches internally
-      // and returns GateResult.error() (confidence: 0.0, latencyMs: 0)
-      // when the call fails (e.g. bad/rejected API key).
-      final bool callFailed = result.confidence == 0.0 && result.latencyMs == 0;
-      
       setState(() {
-        _testResult = callFailed
-            ? '✗ ${gemini.lastError ?? "Key rejected by API"}'
-            : '✓ Key verified — tap Save to keep it';
-        _testing   = false;
-        _keyTested = !callFailed;
+        _testResult = '✓ Key verified — tap Save to keep it';
+        _testing    = false;
+        _keyTested  = true;
       });
-    } catch (e) {
-      AppConfig.geminiApiKey = AppConfig.placeholderKey;
-      final msg = e.toString();
+    } else {
       setState(() {
-        _testResult = '✗ ${msg.length > 60 ? msg.substring(0, 60) : msg}';
+        _testResult = '✗ $error';
         _testing    = false;
         _keyTested  = false;
       });
