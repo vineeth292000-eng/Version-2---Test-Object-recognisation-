@@ -4,10 +4,19 @@ class AppConfig {
   static String geminiApiKey = 'YOUR_GEMINI_API_KEY_HERE';
   static const String placeholderKey = 'YOUR_GEMINI_API_KEY_HERE';
 
-  // UPDATED: gemini-2.0-flash via v1 (not v1beta) — better object recognition
-  // and compatible with the new AQ. key format
-  static const String geminiEndpoint =
-      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent';
+  // Gemini REST API. The v1beta surface is the one documented for
+  // gemini-2.0-flash with inline image input, and it is what the
+  // official AI Studio keys are issued against.
+  static const String geminiApiBase =
+      'https://generativelanguage.googleapis.com/v1beta';
+  static const String geminiModel = 'gemini-2.0-flash';
+
+  static String get geminiEndpoint =>
+      '$geminiApiBase/models/$geminiModel:generateContent';
+
+  // Lightweight endpoint used purely to validate an API key — no image,
+  // no generation, so it can never fail for content/safety reasons.
+  static String get geminiModelsEndpoint => '$geminiApiBase/models';
 
   // Safety distances (cm)
   static double criticalDistance = 40.0;
