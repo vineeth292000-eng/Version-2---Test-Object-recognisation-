@@ -27,10 +27,14 @@ class AppConfig {
   static int frameIntervalMs    = 2500;
   static int geminiTimeoutSecs  = 12;  // slightly more headroom for 2.0-flash
 
-  // TTS cooldowns (ms)
-  static const int ttsSameCueCooldownMs     = 4000;
-  static const int ttsAnyCueCooldownMs      = 2000;
+  // TTS cooldowns (ms). Tuned calmer for cramped indoor spaces where
+  // almost everything is within caution range — avoids talking nonstop.
+  static const int ttsSameCueCooldownMs     = 7000;  // repeat the same state
+  static const int ttsAnyCueCooldownMs      = 3000;  // gap between any cues
   static const int ttsSceneDescCooldownMs   = 1200;
+  static const int ttsUrgentRepeatMs        = 3000;  // re-issue a stop cue
+  // Re-announce an unchanged sensor situation only this often.
+  static const int sensorCueRefreshMs       = 8000;
 
   // Importance ranking thresholds
   static const int importanceHighMs    = 0;
