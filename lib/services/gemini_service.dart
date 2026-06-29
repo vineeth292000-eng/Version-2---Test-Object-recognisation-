@@ -309,6 +309,57 @@ Otherwise leave as empty string "".
   bool get hasConsecutiveFailures => _consecutiveFailures >= 3;
   int  get consecutiveFailures    => _consecutiveFailures;
 
+  /// Validates an API key without sending an image or running generation.
+  /// Returns `null` when the key is valid, otherwise a short, human-readable
+  /// error message (never raw HTML).
+  Future<String?> validateApiKey(String key) async {
+    final trimmed = key.trim();
+    if (trimmed.isEmpty || trimmed == AppConfig.placeholderKey) {
+      return 'Please enter your API key first';
+    }
+    try {
+      final response = await http.get(
+        Uri.parse('${AppConfig.geminiModelsEndpoint}?key=$trimmed'),
+        headers: {'Accept': 'application/json'},
+      ).timeout(Duration(seconds: AppConfig.geminiTimeoutSecs));
+
+      if (response.statusCode == 200) {
+        _consecutiveFailures = 0;
+        return null;
+      }
+      final msg = _humanError(response.statusCode, response.body);
+      lastError = msg;
+      return msg;
+    } catch (e) {
+      final msg = _humanError(null, e.toString());
+      lastError = msg;
+      return msg;
+    }
+  }
+
+  /// Turns an HTTP/error body into a short, readable message.
+  /// Extracts the Gemini JSON error message when present and never
+  /// returns HTML markup (Google's error pages are HTML).
+  String _humanError(int? statusCode, String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map &&
+          decoded['error'] is Map &&
+          decoded['error']['message'] is String) {
+        return decoded['error']['message'] as String;
+      }
+    } catch (_) {
+      // body was not JSON (e.g. an HTML error page) — fall through
+    }
+    if (statusCode != null) {
+      return 'Request failed (HTTP $statusCode).';
+    }
+    final oneLine = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return oneLine.length > 120
+        ? '${oneLine.substring(0, 120)}…'
+        : oneLine;
+  }
+
   Future<String> _callApi(String prompt, Uint8List imageBytes) async {
     if (!AppConfig.isApiKeySet) {
       throw Exception('Gemini API key not set');
@@ -328,7 +379,7 @@ Otherwise leave as empty string "".
       }],
       'generationConfig': {
         'temperature':     0.1,
-        'maxOutputTokens': 350,
+        'maxOutputTokens': 1024,
         'topP':            0.8,
       },
       'safetySettings': [
@@ -342,25 +393,48 @@ Otherwise leave as empty string "".
     final response = await http.post(
       Uri.parse(
           '${AppConfig.geminiEndpoint}?key=${AppConfig.geminiApiKey}'),
-      headers: {'Content-Type': 'application/json; charset=UTF-8'},
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept':       'application/json',
+      },
       body:    body,
     ).timeout(Duration(seconds: AppConfig.geminiTimeoutSecs));
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'HTTP ${response.statusCode}: '
-        '${response.body.substring(
-            0, response.body.length.clamp(0, 200))}'
-      );
+      throw Exception(_humanError(response.statusCode, response.body));
     }
 
-    final respJson   = jsonDecode(response.body) as Map<String, dynamic>;
+    Map<String, dynamic> respJson;
+    try {
+      respJson = jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (_) {
+      throw Exception('Unexpected non-JSON response from Gemini.');
+    }
+
+    // The whole prompt can be rejected before any candidate is produced.
+    final feedback = respJson['promptFeedback'] as Map<String, dynamic>?;
+    if (feedback != null && feedback['blockReason'] != null) {
+      throw Exception('Request blocked: ${feedback['blockReason']}');
+    }
+
     final candidates = respJson['candidates'] as List?;
     if (candidates == null || candidates.isEmpty) {
       throw Exception('No candidates in response');
     }
-    final parts = (candidates[0]['content']['parts'] as List);
-    return (parts[0]['text'] as String).trim();
+
+    final candidate = candidates[0] as Map<String, dynamic>;
+    final content   = candidate['content'] as Map<String, dynamic>?;
+    final parts     = content?['parts'] as List?;
+    if (parts == null || parts.isEmpty) {
+      final reason = candidate['finishReason'] ?? 'unknown';
+      throw Exception('Empty response (finishReason: $reason)');
+    }
+
+    final text = parts[0]['text'] as String?;
+    if (text == null) {
+      throw Exception('Response contained no text');
+    }
+    return text.trim();
   }
 
   Map<String, dynamic> _cleanAndParse(String raw) {
