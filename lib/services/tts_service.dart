@@ -66,9 +66,11 @@ class TtsService {
     final key = cueKey ?? text;
     final now = DateTime.now();
 
-    // Don't interrupt if something of equal or higher priority is playing
-    final outranksCurrent = _currentPriority == null ||
-        priority.index < _currentPriority!.index;
+    // Only a CRITICAL safety cue may interrupt speech that is already
+    // playing. Everything else waits its turn so sentences are never cut
+    // off mid-word — the main cause of the "chops itself off" behaviour.
+    final canInterrupt = priority == TtsPriority.critical &&
+        _currentPriority != TtsPriority.critical;
 
     // Minimum gap after ANY utterance finishes, scaled by priority
     final msSinceFinished = now.difference(_lastFinished).inMilliseconds;
@@ -96,8 +98,10 @@ class TtsService {
       return;
     }
 
-    if (_speaking && !outranksCurrent) {
-      // Queue it but drop lower-priority items already waiting
+    if (_speaking && !canInterrupt) {
+      // Let the current sentence finish. Queue this one, dropping any
+      // already-waiting items of equal or lower priority so the queue
+      // can't pile up and lag behind reality.
       _queue.removeWhere((item) =>
           item.priority.index >= priority.index &&
           item.priority != TtsPriority.critical);
@@ -106,8 +110,8 @@ class TtsService {
       return;
     }
 
-    if (_speaking && outranksCurrent) {
-      // Higher priority — interrupt current speech
+    if (_speaking && canInterrupt) {
+      // Critical safety cue — interrupt whatever is playing.
       interruptedCount++;
       _queue.clear();
       await _tts.stop();
@@ -162,6 +166,15 @@ class TtsService {
 
     // Don't cut off an already-playing critical message
     if (_speaking && _currentPriority == TtsPriority.critical) return;
+
+    // Don't re-issue the SAME stop message every cycle while the hazard
+    // persists — repeat it at a steady interval instead of nonstop.
+    final now = DateTime.now();
+    if (cueKey == _lastCueKey &&
+        now.difference(_lastSpokeForKey).inMilliseconds <
+            AppConfig.ttsUrgentRepeatMs) {
+      return;
+    }
 
     _queue.clear();
     urgentSpoken++;
