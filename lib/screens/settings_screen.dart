@@ -99,10 +99,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // and returns GateResult.error() (confidence: 0.0, latencyMs: 0)
       // when the call fails (e.g. bad/rejected API key).
       final bool callFailed = result.confidence == 0.0 && result.latencyMs == 0;
-
+      
       setState(() {
         _testResult = callFailed
-            ? '✗ Key rejected by API'
+            ? '✗ ${gemini.lastError ?? "Key rejected by API"}'
             : '✓ Key verified — tap Save to keep it';
         _testing   = false;
         _keyTested = !callFailed;
