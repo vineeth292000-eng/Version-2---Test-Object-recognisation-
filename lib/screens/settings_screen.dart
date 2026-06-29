@@ -41,7 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _dangerDist    = prefs.getDouble('danger_distance')   ?? AppConfig.dangerDistance;
       _frameInterval = clamped;
       final saved = prefs.getString('gemini_api_key') ?? '';
-      if (saved.isNotEmpty && saved != AppConfig._placeholderKey) {
+      if (saved.isNotEmpty && saved != AppConfig.placeholderKey) {
         _apiKeyController.text = saved;
       } else {
         _apiKeyController.text = '';
@@ -63,7 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     final testKey = _apiKeyController.text.trim();
-    if (testKey.isEmpty || testKey == AppConfig._placeholderKey) {
+    if (testKey.isEmpty || testKey == AppConfig.placeholderKey) {
       setState(() {
         _testResult = 'Please enter your API key first';
         _testing    = false;
@@ -88,22 +88,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Restore — but only to the key we had before the test.
       // If originalKey was the placeholder, keep testKey live in AppConfig
       // so navigation benefits immediately even before Save is pressed.
-      if (originalKey == AppConfig._placeholderKey) {
+      if (originalKey == AppConfig.placeholderKey) {
         // Leave the real key in place — user will save it
         AppConfig.geminiApiKey = testKey;
       } else {
         AppConfig.geminiApiKey = originalKey;
       }
 
+      // GateResult has no `success` field — runGate() catches internally
+      // and returns GateResult.error() (confidence: 0.0, latencyMs: 0)
+      // when the call fails (e.g. bad/rejected API key).
+      final bool callFailed = result.confidence == 0.0 && result.latencyMs == 0;
+
       setState(() {
-        _testResult = result.success == false
+        _testResult = callFailed
             ? '✗ Key rejected by API'
             : '✓ Key verified — tap Save to keep it';
         _testing   = false;
-        _keyTested = true;
+        _keyTested = !callFailed;
       });
     } catch (e) {
-      AppConfig.geminiApiKey = AppConfig._placeholderKey;
+      AppConfig.geminiApiKey = AppConfig.placeholderKey;
       final msg = e.toString();
       setState(() {
         _testResult = '✗ ${msg.length > 60 ? msg.substring(0, 60) : msg}';
@@ -115,7 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveSettings() async {
     final key = _apiKeyController.text.trim();
-    if (key.isEmpty || key == AppConfig._placeholderKey) {
+    if (key.isEmpty || key == AppConfig.placeholderKey) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enter and test your API key before saving'),
