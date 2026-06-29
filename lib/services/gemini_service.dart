@@ -6,167 +6,185 @@ import '../models/detection_result.dart';
 
 class GeminiService {
 
+  // Track consecutive failures to detect camera/API issues
+  int _consecutiveFailures = 0;
+  int totalGateCalls    = 0;
+  int totalClassifyCalls = 0;
+  int totalFailures     = 0;
+  String? lastError;
+
   static const String _gatePrompt = '''
 You are the first stage of a navigation system for a blind person.
 Look at this image and answer ONE question: is there anything this
 person needs to know about to navigate safely?
 
-Answer ONLY with this exact JSON, nothing else:
+IMPORTANT: This is a chest-mounted camera on a person who is walking.
+You will see a first-person view of whatever is in front of them.
+
+Answer ONLY with this exact JSON, nothing else, no markdown:
 {"obstacle_detected": true, "confidence": 0.85}
 
 obstacle_detected is TRUE if you see ANY of:
-- A person, animal, or moving object
-- Furniture (chair, table, sofa, desk)
-- A door (open or closed)
-- Stairs going up or down
-- A wall, pillar, or barrier closer than 3 metres
-- A step, kerb, or elevation change
-- A narrow passage or corridor
-- Wet floor, hazard, or obstruction
-- A vehicle
+- A person, animal, child, or pet
+- Any furniture: chair, table, sofa, desk, bed, shelf, counter
+- A door (open or closed), including glass doors
+- Stairs going up or down, or any step or kerb
+- A wall, pillar, or barrier within 4 metres
+- A narrow corridor or tight passage
+- Wet floor sign, cables, or floor hazard
+- Any vehicle or bicycle
+- Any object a walking person could collide with
 
-obstacle_detected is FALSE only if:
-- The path ahead is completely clear for at least 3 metres
-- There is nothing a walking person could collide with
+obstacle_detected is FALSE ONLY if:
+- The path ahead is completely open for at least 3 metres
+- You can see clear floor with nothing to walk into
 
-confidence: your certainty 0.0 to 1.0
-No markdown. No explanation. Only the JSON.
+confidence: 0.0 to 1.0 — how certain you are
+No markdown. No explanation. Only the JSON object.
 ''';
 
   static const String _classifyPrompt = '''
 You are a navigation assistant for a blind person walking with a
-chest-mounted camera. Analyze this image with extreme care.
+chest-mounted camera. Your job is to identify EXACTLY what is in
+front of them so they know what to avoid.
 
-Respond ONLY with this exact JSON structure, nothing else, no markdown:
+CRITICAL RULES:
+1. ALWAYS name the specific object — NEVER say "obstacle" or "object"
+2. The "specifics" field must describe what you actually see
+3. The "navigation_instruction" must be a complete spoken sentence
+4. If you are unsure, say what it LOOKS LIKE, not "unknown object"
+
+Respond ONLY with this exact JSON, nothing else, no markdown:
 {
   "primary_obstacle": {
-    "type": "PERSON",
-    "specifics": "elderly woman with walking stick",
+    "type": "CHAIR",
+    "specifics": "wooden chair with armrests blocking path",
     "position": "center",
-    "distance_estimate": "very close",
-    "moving": true,
-    "moving_direction": "toward you"
+    "distance_estimate": "close",
+    "moving": false,
+    "moving_direction": "stationary"
   },
-  "secondary_obstacles": [
-    {
-      "type": "CHAIR",
-      "position": "right",
-      "distance_estimate": "nearby"
-    }
-  ],
+  "secondary_obstacles": [],
   "environment": {
-    "setting": "indoor corridor",
+    "setting": "indoor office",
     "crowding": "low",
     "lighting": "good",
     "floor_hazards": false,
     "narrow_passage": false
   },
-  "navigation_instruction": "Stop and wait. A person is walking directly toward you from about one metre ahead. Once they pass, proceed forward.",
-  "urgency": "high",
-  "confidence": 0.88,
+  "navigation_instruction": "There is a wooden chair directly ahead about one metre away. Step to your left to go around it.",
+  "urgency": "medium",
+  "confidence": 0.9,
   "uncertainty_reason": ""
 }
 
-RULES FOR EACH FIELD:
+FIELD RULES:
 
-primary_obstacle.type — must be one of:
+primary_obstacle.type — pick the BEST match from this list:
 PERSON, GROUP_OF_PEOPLE, CHILD, ANIMAL, CHAIR, TABLE, SOFA,
 DESK, BED, DOOR_OPEN, DOOR_CLOSED, STAIRS_UP, STAIRS_DOWN,
 STEP_UP, STEP_DOWN, WALL, PILLAR, GLASS_DOOR, VEHICLE,
 BICYCLE, SHOPPING_CART, TROLLEY, WET_FLOOR, NARROW_PASSAGE,
 COUNTER, SHELF, CLEAR
 
-primary_obstacle.specifics — describe exactly what you see in
-plain English, 3-8 words. Examples:
-  "man carrying large boxes"
-  "glass door partially open"
-  "steep staircase going down"
-  "group of children running"
-  "shopping trolley blocking path"
+primary_obstacle.specifics — REQUIRED. Describe what you see
+in 3-8 words. Be specific. Examples:
+  "wooden office chair with wheels"
+  "glass door partially open inward"
+  "steep concrete staircase going down"
+  "elderly man with walking frame"
+  "low coffee table with sharp corners"
+  "shopping trolley blocking left side"
+  "sofa pushed against the wall"
+  "large desk with computer monitor"
+  "child running from left to right"
+  "metal pillar in corridor center"
+If you are truly unsure what it is, describe its shape/size:
+  "large dark rectangular object"
+  "small cylindrical object on floor"
 
 primary_obstacle.position — left, center, or right
 
-primary_obstacle.distance_estimate — one of:
-  "very close" (under 1 metre)
-  "close" (1-2 metres)
-  "nearby" (2-4 metres)
-  "ahead" (4-6 metres)
-  "far" (over 6 metres)
+primary_obstacle.distance_estimate:
+  "very close" = under 1 metre
+  "close"      = 1 to 2 metres
+  "nearby"     = 2 to 4 metres
+  "ahead"      = 4 to 6 metres
+  "far"        = over 6 metres
 
-primary_obstacle.moving — true if the obstacle is a person or
-animal that appears to be moving
+primary_obstacle.moving — true ONLY for people or animals
+that appear to be actively walking or running
 
-primary_obstacle.moving_direction — only if moving is true:
-  "toward you", "away from you", "crossing left to right",
-  "crossing right to left", "stationary"
+primary_obstacle.moving_direction — if moving is true:
+  "toward you", "away from you",
+  "crossing left to right", "crossing right to left"
+  Otherwise: "stationary"
 
-secondary_obstacles — list any OTHER obstacles visible in the
-scene that could affect navigation. Can be empty list [].
+secondary_obstacles — other things visible that could
+also be navigation hazards. Can be empty [].
 
-environment.setting — describe the space in 2-3 words:
-  "indoor corridor", "busy shop", "outdoor pavement",
-  "office", "stairwell", "car park", "restaurant", etc.
+environment.setting — 2-3 words describing the space:
+  "home living room", "office corridor", "busy supermarket",
+  "outdoor footpath", "stairwell", "restaurant", "classroom"
 
-environment.crowding — one of: "empty", "low", "moderate", "crowded"
+environment.crowding — "empty", "low", "moderate", "crowded"
+environment.lighting — "dark", "dim", "adequate", "good", "bright"
+environment.floor_hazards — true if cables, wet patches,
+  uneven surface, steps, or anything to trip on
+environment.narrow_passage — true if path is under 1 metre wide
 
-environment.lighting — one of: "dark", "dim", "adequate", "good", "bright"
+navigation_instruction — THE MOST IMPORTANT FIELD.
+Write one or two complete natural spoken sentences.
+Rules:
+- Use the actual object name from specifics
+- Say where it is (left, right, ahead, center)
+- Say how far (one metre, two metres, nearby, close)
+- Say what to do (step left, move right, stop, slow down)
+- Do NOT say "obstacle" or "object"
+- Do NOT just say "move left" — explain why
 
-environment.floor_hazards — true if you see wet floors, steps,
-uneven surfaces, cables, or anything the person could trip on
+GOOD examples:
+"A wooden chair is directly ahead about one metre. Step to your
+ left to walk around it."
 
-environment.narrow_passage — true if the path ahead is less than
-1 metre wide
+"There are stairs going down directly ahead, about two metres
+ away. Slow down and reach for the handrail on your right."
 
-navigation_instruction — THIS IS THE MOST IMPORTANT FIELD.
-Write a clear, natural, complete spoken instruction for a blind
-person. Be specific. Use the actual object you identified.
-Do NOT say "obstacle" — say what it actually is.
-Do NOT say just "move left" — explain WHY and by how much.
+"A person is walking toward you from the center. Stop and wait
+ for them to pass, then continue forward."
 
-Good examples:
-  "A person is walking toward you from the center. Stop and wait
-   two seconds for them to pass, then continue forward."
+"A glass door is ahead on your left, about one metre. It appears
+ partially open — you can pass through carefully."
 
-  "There are stairs going down directly ahead, about two metres
-   away. Approach slowly and find the handrail on your right."
+"A low coffee table is on your right, close. Continue forward
+ staying to the left."
 
-  "A glass door is ahead on your left, about one metre. It appears
-   to be open. You can pass through it."
+BAD examples — never do this:
+"Obstacle ahead, move left."
+"Object detected nearby."
+"Move right." (no context)
+"Unknown obstacle ahead."
 
-  "A chair is blocking the center path. Step to your left about
-   half a metre to go around it."
-
-  "The corridor narrows ahead. Move toward the center and proceed
-   slowly — about one metre clearance on each side."
-
-  "Three people are standing in a group directly ahead about two
-   metres. Move to your right to walk around them."
-
-Bad examples (never do this):
-  "Obstacle ahead, move left." ← too vague
-  "Person detected." ← no instruction
-  "Move right." ← no context
-
-urgency — one of: "low", "medium", "high", "critical"
-  critical: immediate danger (stairs, very close moving person)
-  high: action needed soon (person approaching, door, step)
-  medium: awareness needed (furniture nearby, narrow passage)
-  low: informational (something in periphery, not blocking path)
+urgency:
+  "critical" — stairs down, very close moving person, step down
+  "high"     — approaching person, open door, step, close object
+  "medium"   — furniture nearby, narrow passage, door closed
+  "low"      — something far away, not blocking path
 
 confidence: 0.0 to 1.0
 
-uncertainty_reason: if confidence < 0.6, briefly explain why.
-Otherwise empty string "".
+uncertainty_reason: if confidence below 0.6, explain briefly.
+Otherwise leave as empty string "".
 ''';
 
-  /// Stage 1: Is there an obstacle? Fast binary check.
-  /// Never throws. Returns safe fallback (obstacle=true) on any error.
   Future<GateResult> runGate(Uint8List imageBytes) async {
     final sw = Stopwatch()..start();
+    totalGateCalls++;
     try {
       final raw  = await _callApi(_gatePrompt, imageBytes);
       sw.stop();
       final json = _cleanAndParse(raw);
+      _consecutiveFailures = 0;
       return GateResult(
         obstacleDetected: json['obstacle_detected'] as bool? ?? true,
         confidence:       ((json['confidence'] as num?) ?? 0.5).toDouble(),
@@ -174,23 +192,27 @@ Otherwise empty string "".
       );
     } catch (e) {
       sw.stop();
-      print('[gemini] Gate error: $e');
+      _consecutiveFailures++;
+      totalFailures++;
+      lastError = e.toString();
+      print('[gemini] Gate error (#$_consecutiveFailures): $e');
       return GateResult.error();
     }
   }
 
-  /// Stage 2: What is it, where is it, what should the user do?
-  /// Never throws. Returns fallback on any error.
   Future<DetectionResult> classify(Uint8List imageBytes) async {
     final sw = Stopwatch()..start();
+    totalClassifyCalls++;
     try {
       final raw  = await _callApi(_classifyPrompt, imageBytes);
       sw.stop();
       final json = _cleanAndParse(raw);
+      _consecutiveFailures = 0;
 
       final primary = json['primary_obstacle'] as Map<String, dynamic>? ?? {};
       final label   = _parseLabel(primary['type'] as String? ?? 'UNKNOWN');
-      final pos     = _parsePosition(primary['position'] as String? ?? 'unclear');
+      final pos     = _parsePosition(
+          primary['position'] as String? ?? 'unclear');
 
       final secondaryList = json['secondary_obstacles'] as List? ?? [];
       final secondaries   = secondaryList.map((s) {
@@ -211,20 +233,28 @@ Otherwise empty string "".
         narrowPassage: env['narrow_passage'] as bool?   ?? false,
       );
 
+      // Ensure specifics is never empty — fall back to label name
+      var specifics = primary['specifics'] as String? ?? '';
+      if (specifics.trim().isEmpty) {
+        specifics = _labelToSpecifics(label);
+      }
+
       return DetectionResult(
         label:                 label,
-        specifics:             primary['specifics']           as String? ?? '',
+        specifics:             specifics,
         position:              pos,
-        distanceEstimate:      primary['distance_estimate']   as String? ?? 'nearby',
-        isMoving:              primary['moving']              as bool?   ?? false,
-        movingDirection:       primary['moving_direction']    as String? ?? '',
+        distanceEstimate:      primary['distance_estimate']
+                                   as String? ?? 'nearby',
+        isMoving:              primary['moving']           as bool?   ?? false,
+        movingDirection:       primary['moving_direction'] as String? ?? 'stationary',
         secondaryObstacles:    secondaries,
         environment:           envInfo,
-        navigationInstruction: json['navigation_instruction'] as String? ?? '',
-        urgency:               json['urgency']                as String? ?? 'medium',
+        navigationInstruction: json['navigation_instruction']
+                                   as String? ?? '',
+        urgency:               json['urgency']             as String? ?? 'medium',
         confidence:            ((json['confidence'] as num?) ?? 0.0)
                                    .toDouble().clamp(0.0, 1.0),
-        uncertaintyReason:     json['uncertainty_reason']     as String? ?? '',
+        uncertaintyReason:     json['uncertainty_reason']  as String? ?? '',
         latencyMs:             sw.elapsedMilliseconds,
         success:               true,
         rawResponse:           raw,
@@ -232,13 +262,53 @@ Otherwise empty string "".
 
     } catch (e) {
       sw.stop();
-      print('[gemini] Classify error: $e');
+      _consecutiveFailures++;
+      totalFailures++;
+      lastError = e.toString();
+      print('[gemini] Classify error (#$_consecutiveFailures): $e');
       return DetectionResult.fallback(e.toString().substring(
           0, e.toString().length.clamp(0, 80)));
     }
   }
 
-  /// Make HTTP POST to Gemini API with image and prompt.
+  /// Fallback specifics when Gemini returns empty — uses label name
+  String _labelToSpecifics(ObstacleLabel label) {
+    const m = {
+      ObstacleLabel.person:          'person ahead',
+      ObstacleLabel.group_of_people: 'group of people',
+      ObstacleLabel.child:           'child ahead',
+      ObstacleLabel.animal:          'animal ahead',
+      ObstacleLabel.chair:           'chair blocking path',
+      ObstacleLabel.table:           'table ahead',
+      ObstacleLabel.sofa:            'sofa ahead',
+      ObstacleLabel.desk:            'desk ahead',
+      ObstacleLabel.bed:             'bed ahead',
+      ObstacleLabel.door_open:       'open door',
+      ObstacleLabel.door_closed:     'closed door',
+      ObstacleLabel.stairs_up:       'stairs going up',
+      ObstacleLabel.stairs_down:     'stairs going down',
+      ObstacleLabel.step_up:         'step up',
+      ObstacleLabel.step_down:       'step down',
+      ObstacleLabel.wall:            'wall ahead',
+      ObstacleLabel.pillar:          'pillar in path',
+      ObstacleLabel.glass_door:      'glass door',
+      ObstacleLabel.vehicle:         'vehicle nearby',
+      ObstacleLabel.bicycle:         'bicycle in path',
+      ObstacleLabel.shopping_cart:   'shopping trolley',
+      ObstacleLabel.trolley:         'trolley blocking path',
+      ObstacleLabel.wet_floor:       'wet floor area',
+      ObstacleLabel.narrow_passage:  'narrow passage ahead',
+      ObstacleLabel.counter:         'counter ahead',
+      ObstacleLabel.shelf:           'shelf in path',
+      ObstacleLabel.clear:           'clear path',
+      ObstacleLabel.unknown:         'unidentified object',
+    };
+    return m[label] ?? 'object in path';
+  }
+
+  bool get hasConsecutiveFailures => _consecutiveFailures >= 3;
+  int  get consecutiveFailures    => _consecutiveFailures;
+
   Future<String> _callApi(String prompt, Uint8List imageBytes) async {
     if (!AppConfig.isApiKeySet) {
       throw Exception('Gemini API key not set');
@@ -258,7 +328,7 @@ Otherwise empty string "".
       }],
       'generationConfig': {
         'temperature':     0.1,
-        'maxOutputTokens': 250,
+        'maxOutputTokens': 350,
         'topP':            0.8,
       },
       'safetySettings': [
@@ -270,7 +340,8 @@ Otherwise empty string "".
     });
 
     final response = await http.post(
-      Uri.parse('${AppConfig.geminiEndpoint}?key=${AppConfig.geminiApiKey}'),
+      Uri.parse(
+          '${AppConfig.geminiEndpoint}?key=${AppConfig.geminiApiKey}'),
       headers: {'Content-Type': 'application/json; charset=UTF-8'},
       body:    body,
     ).timeout(Duration(seconds: AppConfig.geminiTimeoutSecs));
@@ -278,7 +349,8 @@ Otherwise empty string "".
     if (response.statusCode != 200) {
       throw Exception(
         'HTTP ${response.statusCode}: '
-        '${response.body.substring(0, response.body.length.clamp(0, 200))}'
+        '${response.body.substring(
+            0, response.body.length.clamp(0, 200))}'
       );
     }
 
@@ -291,7 +363,6 @@ Otherwise empty string "".
     return (parts[0]['text'] as String).trim();
   }
 
-  /// Strip markdown fences and parse JSON.
   Map<String, dynamic> _cleanAndParse(String raw) {
     var clean = raw.trim();
     if (clean.startsWith('```')) {
@@ -299,6 +370,12 @@ Otherwise empty string "".
           .replaceAll(RegExp(r'^```json\s*', multiLine: true), '')
           .replaceAll(RegExp(r'^```\s*',      multiLine: true), '')
           .trim();
+    }
+    // Sometimes Gemini adds trailing text after the JSON — strip it
+    final start = clean.indexOf('{');
+    final end   = clean.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      clean = clean.substring(start, end + 1);
     }
     return jsonDecode(clean) as Map<String, dynamic>;
   }
@@ -345,4 +422,3 @@ Otherwise empty string "".
     }
   }
 }
-
