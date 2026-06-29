@@ -54,7 +54,10 @@ class SensorData {
       center < AppConfig.dangerDistance ||
       left   < AppConfig.dangerDistance ||
       right  < AppConfig.dangerDistance;
-  bool get isCaution => center < AppConfig.cautionDistance;
+  bool get isCaution =>
+      center < AppConfig.cautionDistance ||
+      left   < AppConfig.cautionDistance ||
+      right  < AppConfig.cautionDistance;
 
   double get minimumDistance =>
       [left, center, right].reduce((a, b) => a < b ? a : b);
