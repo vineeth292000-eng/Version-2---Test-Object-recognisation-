@@ -49,6 +49,12 @@ class CascadeEngine {
   DateTime  _lastCriticalClassifyAttempt =
       DateTime.fromMillisecondsSinceEpoch(0);
 
+  // Change-detection for sensor cues: only re-announce when the situation
+  // changes or after a refresh interval, so we don't talk every frame.
+  String?   _lastSensorCueKey;
+  DateTime  _lastSensorCueSpoken =
+      DateTime.fromMillisecondsSinceEpoch(0);
+
   CascadeEngine({required TtsService tts}) : _tts = tts;
 
   Future<NavCue> process(SensorData sensors, Uint8List? frameBytes) async {
@@ -58,25 +64,42 @@ class CascadeEngine {
 
     _velocity.add(sensors);
 
-    // ── SAFETY LAYER — always first, no AI, but no longer mute ────────
-    if (sensors.isCritical) {
+    final threat = sensors.assess();
+
+    // ── SAFETY LAYER — any direction, always first, no AI ─────────────
+    if (threat.level == ThreatLevel.critical) {
       safetyCount++;
       criticalCueCount++;
 
-      final objectName = _recentObjectNameOrNull();
-      final dist = sensors.center.round();
-      String safetyText;
-      if (objectName != null) {
-        safetyText = _velocity.isApproaching
-            ? 'Stop! A $objectName is approaching, $dist centimetres ahead.'
-            : 'Stop! A $objectName is $dist centimetres directly ahead.';
+      final dist = threat.distance.round();
+      final String safetyText;
+      final String direction;
+
+      if (threat.direction == ThreatDirection.left) {
+        direction  = 'move right';
+        safetyText = 'Stop! Something is $dist centimetres on your left. '
+                     'Move to your right.';
+      } else if (threat.direction == ThreatDirection.right) {
+        direction  = 'move left';
+        safetyText = 'Stop! Something is $dist centimetres on your right. '
+                     'Move to your left.';
       } else {
-        safetyText = _velocity.isApproaching
-            ? 'Stop! Something is approaching fast, $dist centimetres ahead.'
-            : 'Stop! Obstacle $dist centimetres directly ahead.';
+        // Head-on — name the obstacle if the AI saw it recently.
+        direction = 'stop';
+        final objectName = _recentObjectNameOrNull();
+        if (objectName != null) {
+          safetyText = _velocity.isApproaching
+              ? 'Stop! A $objectName is approaching, $dist centimetres ahead.'
+              : 'Stop! A $objectName is $dist centimetres directly ahead.';
+        } else {
+          safetyText = _velocity.isApproaching
+              ? 'Stop! Something is approaching fast, $dist centimetres ahead.'
+              : 'Stop! Obstacle $dist centimetres directly ahead.';
+        }
       }
 
-      await _tts.speakUrgent(safetyText, cueKey: 'critical_stop');
+      await _tts.speakUrgent(safetyText,
+          cueKey: 'critical_stop_${threat.direction.name}');
 
       // Find out what it is in the background — doesn't block or
       // interrupt the stop message, just enriches the *next* one.
@@ -86,8 +109,8 @@ class CascadeEngine {
       final cue = NavCue(
         text:           safetyText,
         source:         CueSource.safety,
-        direction:      'stop',
-        obstacleLabel:  objectName ?? 'obstacle',
+        direction:      direction,
+        obstacleLabel:  'obstacle',
         environment:    EnvironmentInfo.empty(),
         urgency:        'critical',
         timestamp:      DateTime.now(),
@@ -102,10 +125,7 @@ class CascadeEngine {
       sensorOnlyCount++;
       final cue = _buildSensorCue(sensors, sw.elapsedMilliseconds);
       lastCue = cue;
-      if (sensors.isCaution) {
-        await _tts.speak(cue.text,
-            priority: TtsPriority.medium, cueKey: _sensorCueKey(sensors));
-      }
+      await _speakSensorCue(cue, sensors, TtsPriority.medium);
       return cue;
     }
 
@@ -120,10 +140,7 @@ class CascadeEngine {
       sensorOnlyCount++;
       final cue = _buildSensorCue(sensors, sw.elapsedMilliseconds);
       lastCue = cue;
-      if (sensors.isCaution) {
-        await _tts.speak(cue.text,
-            priority: TtsPriority.low, cueKey: _sensorCueKey(sensors));
-      }
+      await _speakSensorCue(cue, sensors, TtsPriority.low);
       _checkAndFireSceneDescription(sensors, frameBytes);
       return cue;
     }
@@ -143,8 +160,7 @@ class CascadeEngine {
       apiErrorCount++;
       final cue = _buildSensorCue(sensors, sw.elapsedMilliseconds);
       lastCue = cue;
-      await _tts.speak(cue.text,
-          priority: TtsPriority.medium, cueKey: _sensorCueKey(sensors));
+      await _speakSensorCue(cue, sensors, TtsPriority.medium);
       return cue;
     }
 
@@ -227,8 +243,31 @@ class CascadeEngine {
     return 'b4';
   }
 
-  String _sensorCueKey(SensorData s) =>
-      'sensor_${s.closestDirection}_${_distanceBucket(s.center)}';
+  // Stable across small distance jitter: keyed on the direction that matters
+  // and the urgency band, not the raw centre distance.
+  String _sensorCueKey(SensorData s) {
+    final t = s.assess();
+    return 'sensor_${t.direction.name}_${t.level.name}';
+  }
+
+  /// Speaks a sensor cue only when something nearby actually warrants it AND
+  /// the situation has changed (or a refresh interval has elapsed). This is
+  /// what stops the app from talking every single frame in cramped spaces.
+  Future<void> _speakSensorCue(
+      NavCue cue, SensorData sensors, TtsPriority priority) async {
+    if (!sensors.isCaution) return;
+
+    final key       = _sensorCueKey(sensors);
+    final now       = DateTime.now();
+    final changed   = key != _lastSensorCueKey;
+    final refreshed = now.difference(_lastSensorCueSpoken).inMilliseconds >=
+        AppConfig.sensorCueRefreshMs;
+    if (!changed && !refreshed) return;
+
+    _lastSensorCueKey    = key;
+    _lastSensorCueSpoken = now;
+    await _tts.speak(cue.text, priority: priority, cueKey: key);
+  }
 
   String _richCueKey(DetectionResult det, SensorData sensors) =>
       'gemini_${det.label.name}_${det.position.name}_'
@@ -236,6 +275,12 @@ class CascadeEngine {
 
   TtsPriority _importancePriority(
       DetectionResult det, SensorData sensors) {
+    // The sensors are direction-aware and always available, so let the
+    // nearest physical reading set a floor on urgency — a very close object
+    // on any side must not be down-ranked because the camera looked ahead.
+    final threat = sensors.assess();
+    if (threat.level == ThreatLevel.critical) return TtsPriority.critical;
+
     if (det.label == ObstacleLabel.stairs_down ||
         det.label == ObstacleLabel.step_down) {
       return TtsPriority.critical;
@@ -253,7 +298,7 @@ class CascadeEngine {
         det.label == ObstacleLabel.stairs_up ||
         det.label == ObstacleLabel.wet_floor ||
         det.label == ObstacleLabel.glass_door ||
-        sensors.center < 60) {
+        threat.level == ThreatLevel.high) {
       return TtsPriority.high;
     }
 
@@ -373,47 +418,82 @@ class CascadeEngine {
     return 'A $specifics is $distance $position. $direction.';
   }
 
+  /// Short token stored on the cue describing the recommended action.
+  String _directionToken(ThreatAssessment t) {
+    if (t.level == ThreatLevel.clear) return 'proceed';
+    switch (t.direction) {
+      case ThreatDirection.left:   return 'move right';
+      case ThreatDirection.right:  return 'move left';
+      case ThreatDirection.center:
+      case ThreatDirection.none:
+        return t.level == ThreatLevel.critical
+            ? 'stop'
+            : 'move ${t.openSide}';
+    }
+  }
+
+  /// Spoken evasion instruction: steer away from a side threat, or toward
+  /// the most open side when the threat is straight ahead.
+  String _evasionText(ThreatAssessment t) {
+    switch (t.direction) {
+      case ThreatDirection.left:   return 'Move to your right';
+      case ThreatDirection.right:  return 'Move to your left';
+      case ThreatDirection.center:
+      case ThreatDirection.none:
+        return t.level == ThreatLevel.critical
+            ? 'Stop'
+            : 'Move to your ${t.openSide}';
+    }
+  }
+
   NavCue _buildSensorCue(SensorData sensors, int latencyMs) {
+    final t       = sensors.assess();
+    final dist    = t.distance.round();
+    final evasion = _evasionText(t);
+
     String text;
-    String direction;
+    String direction = _directionToken(t);
     TtsPriority priority;
 
-    final dist = sensors.center.round();
-
-    if (sensors.center < 40) {
-      text      = 'Stop immediately. Something is $dist centimetres '
-                  'directly in front of you.';
-      direction = 'stop';
-      priority  = TtsPriority.critical;
-    } else if (sensors.center < 80) {
-      direction = sensors.safeDirection;
-      final velNote = _velocity.isApproaching
-          ? ' It appears to be approaching.'
-          : '';
-      text     = 'Obstacle $dist centimetres ahead.$velNote $direction.';
-      priority = TtsPriority.high;
-    } else if (sensors.left < 60) {
-      direction = 'move right';
-      text      = 'Something very close on your left, '
-                  '${sensors.left.round()} centimetres. Move to your right.';
-      priority  = TtsPriority.high;
-    } else if (sensors.right < 60) {
-      direction = 'move left';
-      text      = 'Something very close on your right, '
-                  '${sensors.right.round()} centimetres. Move to your left.';
-      priority  = TtsPriority.high;
-    } else if (sensors.left < 100) {
-      direction = 'move slightly right';
-      text      = 'Object on your left. Drift slightly to your right.';
-      priority  = TtsPriority.medium;
-    } else if (sensors.right < 100) {
-      direction = 'move slightly left';
-      text      = 'Object on your right. Drift slightly to your left.';
-      priority  = TtsPriority.medium;
-    } else {
+    if (t.level == ThreatLevel.clear) {
       direction = 'proceed';
       text      = 'Path is clear. Continue forward.';
       priority  = TtsPriority.low;
+    } else {
+      final where = t.direction == ThreatDirection.center
+          ? 'directly ahead'
+          : 'on your ${t.direction.name}';
+
+      switch (t.level) {
+        case ThreatLevel.critical:
+          text = t.direction == ThreatDirection.center
+              ? 'Stop immediately. Something is $dist centimetres '
+                'directly in front of you.'
+              : 'Stop. Something is $dist centimetres $where. $evasion.';
+          priority = TtsPriority.critical;
+          break;
+        case ThreatLevel.high:
+          final velNote = (t.direction == ThreatDirection.center &&
+                  _velocity.isApproaching)
+              ? ' It appears to be approaching.'
+              : '';
+          text     = 'Obstacle $dist centimetres $where.$velNote $evasion.';
+          priority = TtsPriority.high;
+          break;
+        case ThreatLevel.medium:
+          text     = 'Object $dist centimetres $where. $evasion.';
+          priority = TtsPriority.medium;
+          break;
+        case ThreatLevel.low:
+          text     = 'Something $where, about $dist centimetres away. '
+                     'Proceed with caution.';
+          priority = TtsPriority.low;
+          break;
+        case ThreatLevel.clear:
+          text     = 'Path is clear. Continue forward.';
+          priority = TtsPriority.low;
+          break;
+      }
     }
 
     switch (priority) {
@@ -429,7 +509,8 @@ class CascadeEngine {
       direction:      direction,
       obstacleLabel:  'obstacle',
       environment:    EnvironmentInfo.empty(),
-      urgency:        sensors.center < 80 ? 'high' : 'low',
+      urgency:        (priority == TtsPriority.critical ||
+                       priority == TtsPriority.high) ? 'high' : 'low',
       timestamp:      DateTime.now(),
       totalLatencyMs: latencyMs,
     );
