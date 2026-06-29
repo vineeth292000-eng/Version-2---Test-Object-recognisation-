@@ -1,5 +1,5 @@
 class AppConfig {
-  static String geminiApiKey = 'AQ.Ab8RN6IHskIg_Jlov2fIzkFktjXpHpWH26y-hyjVauiorH-22g';
+  static String geminiApiKey = 'YOUR_GEMINI_API_KEY';
 
   static const String geminiEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
@@ -45,6 +45,6 @@ class AppConfig {
   static const int    complexSceneNarrowCm           = 80;
 
   static bool get isApiKeySet =>
-      geminiApiKey.isNotEmpty && geminiApiKey != 'AQ.Ab8RN6IHskIg_Jlov2fIzkFktjXpHpWH26y-hyjVauiorH-22g';
+      geminiApiKey.isNotEmpty && geminiApiKey != 'YOUR_GEMINI_API_KEY';
 }
 
